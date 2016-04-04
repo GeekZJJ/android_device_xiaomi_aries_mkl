@@ -1,0 +1,306 @@
+
+project frameworks/opt/telephony/
+diff --git a/frameworks/opt/telephony/src/java/android/telephony/SmsMessage.java b/frameworks/opt/telephony/src/java/android/telephony/SmsMessage.java
+index fce20f0..11a7371 100755
+--- a/frameworks/opt/telephony/src/java/android/telephony/SmsMessage.java
++++ b/frameworks/opt/telephony/src/java/android/telephony/SmsMessage.java
+@@ -30,7 +30,6 @@ import com.android.internal.telephony.SmsMessageBase.SubmitPduBase;
+ import com.android.internal.telephony.Sms7BitEncodingTranslator;
+ 
+ import java.lang.Math;
+-import java.text.BreakIterator;	//[PM99] bug#1136 asing
+ import java.util.ArrayList;
+ import java.util.Arrays;
+ 
+@@ -366,7 +365,6 @@ public class SmsMessage {
+         // below cleanly if these MAX_* constants were defined more
+         // flexibly...
+ 
+-        Rlog.e(LOG_TAG, "fragmentText");
+         int limit;
+         if (ted.codeUnitSize == SmsConstants.ENCODING_7BIT) {
+             int udhLength;
+@@ -427,18 +425,7 @@ public class SmsMessage {
+                             ted.languageTable, ted.languageShiftTable);
+                 }
+             } else {  // Assume unicode.
+-//[PM99] bug#1136 asing s {      
+-				
+-                nextPos = Math.min(pos + limit / 2, textLen);
+-				
+-		  if (nextPos < textLen) {
+-		      BreakIterator breakIterator = BreakIterator.getCharacterInstance();
+-                    breakIterator.setText(newMsgBody.toString());
+-                    if (!breakIterator.isBoundary(nextPos)) {
+-                        nextPos = breakIterator.preceding(nextPos);
+-                    }
+-                }
+-//[PM99] bug#1136 asing e {
++                nextPos = pos + Math.min(limit / 2, textLen - pos);
+             }
+             if ((nextPos <= pos) || (nextPos > textLen)) {
+                 Rlog.e(LOG_TAG, "fragmentText failed (" + pos + " >= " + nextPos + " or " +
+diff --git a/frameworks/opt/telephony/src/java/com/android/internal/telephony/cdma/CDMALTEPhone.java b/frameworks/opt/telephony/src/java/com/android/internal/telephony/cdma/CDMALTEPhone.java
+index d4074be..818ffbf 100644
+--- a/frameworks/opt/telephony/src/java/com/android/internal/telephony/cdma/CDMALTEPhone.java
++++ b/frameworks/opt/telephony/src/java/com/android/internal/telephony/cdma/CDMALTEPhone.java
+@@ -429,10 +429,8 @@ public class CDMALTEPhone extends CDMAPhone {
+         IccRecords curIccRecords = null;
+ 
+         if (mCdmaSubscriptionSource == CDMA_SUBSCRIPTION_NV) {
+-            operatorNumeric = SystemProperties.get(PROPERTY_CDMA_HOME_OPERATOR_NUMERIC);
+-        }
+-
+-        if (TextUtils.isEmpty(operatorNumeric)) {
++            operatorNumeric = SystemProperties.get("ro.cdma.home.operator.numeric");
++        } else if (mCdmaSubscriptionSource == CDMA_SUBSCRIPTION_RUIM_SIM) {
+             curIccRecords = mSimRecords;
+             if (curIccRecords != null) {
+                 operatorNumeric = curIccRecords.getOperatorNumeric();
+diff --git a/frameworks/opt/telephony/src/java/com/android/internal/telephony/cdma/CDMAPhone.java b/frameworks/opt/telephony/src/java/com/android/internal/telephony/cdma/CDMAPhone.java
+index 2193e94..aca42a8 100644
+--- a/frameworks/opt/telephony/src/java/com/android/internal/telephony/cdma/CDMAPhone.java
++++ b/frameworks/opt/telephony/src/java/com/android/internal/telephony/cdma/CDMAPhone.java
+@@ -663,7 +663,15 @@ public class CDMAPhone extends PhoneBase {
+ 
+     @Override
+     public String getSubscriberId() {
+-        return mSST.getImsi();
++        if (mCdmaSubscriptionSource == CDMA_SUBSCRIPTION_NV) {
++            return mSST.getNvImsi();
++        } else {
++            IccRecords r = mIccRecords.get();
++            if (r != null) {
++                return r.getIMSI();
++            }
++        }
++        return null;
+     }
+ 
+     @Override
+diff --git a/frameworks/opt/telephony/src/java/com/android/internal/telephony/cdma/CdmaServiceStateTracker.java b/frameworks/opt/telephony/src/java/com/android/internal/telephony/cdma/CdmaServiceStateTracker.java
+index 01d19bf..474cebc 100644
+--- a/frameworks/opt/telephony/src/java/com/android/internal/telephony/cdma/CdmaServiceStateTracker.java
++++ b/frameworks/opt/telephony/src/java/com/android/internal/telephony/cdma/CdmaServiceStateTracker.java
+@@ -430,17 +430,6 @@ public class CdmaServiceStateTracker extends ServiceStateTracker {
+                     mIsMinInfoReady = true;
+ 
+                     updateOtaspState();
+-                    if (!mIsSubscriptionFromRuim && mIccRecords != null) {
+-                        if (DBG) {
+-                            log("GET_CDMA_SUBSCRIPTION set imsi in mIccRecords");
+-                        }
+-                        mIccRecords.setImsi(getImsi());
+-                    } else {
+-                        if (DBG) {
+-                            log("GET_CDMA_SUBSCRIPTION either mIccRecords is null  or NV type device" +
+-                                    " - not setting Imsi in mIccRecords");
+-                        }
+-                    }
+                 } else {
+                     if (DBG) {
+                         log("GET_CDMA_SUBSCRIPTION: error parsing cdmaSubscription params num="
+@@ -1900,10 +1889,9 @@ public class CdmaServiceStateTracker extends ServiceStateTracker {
+     /**
+      * Returns IMSI as MCC + MNC + MIN
+      */
+-    String getImsi() {
+-        // TODO: When RUIM is enabled, IMSI will come from RUIM not build-time props.
++    public String getNvImsi() {
+         String operatorNumeric = getSystemProperty(
+-                TelephonyProperties.PROPERTY_ICC_OPERATOR_NUMERIC, "");
++                CDMAPhone.PROPERTY_CDMA_HOME_OPERATOR_NUMERIC, "");
+ 
+         if (!TextUtils.isEmpty(operatorNumeric) && getCdmaMin() != null) {
+             return (operatorNumeric + getCdmaMin());
+diff --git a/frameworks/opt/telephony/src/java/com/android/internal/telephony/dataconnection/DcTracker.java b/frameworks/opt/telephony/src/java/com/android/internal/telephony/dataconnection/DcTracker.java
+index 91ac2c0..c99d48e 100755
+--- a/frameworks/opt/telephony/src/java/com/android/internal/telephony/dataconnection/DcTracker.java
++++ b/frameworks/opt/telephony/src/java/com/android/internal/telephony/dataconnection/DcTracker.java
+@@ -941,6 +941,7 @@ public final class DcTracker extends DcTrackerBase {
+     }
+ 
+     private boolean trySetupData(ApnContext apnContext) {
++        boolean retValue = false;
+         if (DBG) {
+             log("trySetupData for type:" + apnContext.getApnType() +
+                     " due to " + apnContext.getReason() + " apnContext=" + apnContext);
+@@ -983,10 +984,13 @@ public final class DcTracker extends DcTrackerBase {
+                 ArrayList<ApnSetting> waitingApns = buildWaitingApns(apnContext.getApnType(),
+                         radioTech);
+                 if (waitingApns.isEmpty()) {
+-                    notifyNoData(DcFailCause.MISSING_UNKNOWN_APN, apnContext);
+                     notifyOffApnsOfAvailability(apnContext.getReason());
+-                    if (DBG) log("trySetupData: X No APN found retValue=false");
+-                    return false;
++                    retValue = setupData(apnContext, radioTech);
++                    if(!retValue) {
++                        notifyNoData(DcFailCause.MISSING_UNKNOWN_APN, apnContext);
++                    }
++                    notifyOffApnsOfAvailability(apnContext.getReason());
++                    return retValue;
+                 } else {
+                     apnContext.setWaitingApns(waitingApns);
+                     if (DBG) {
+@@ -1005,7 +1009,9 @@ public final class DcTracker extends DcTrackerBase {
+                             + apnListToString(apnContext.getWaitingApns()));
+                 }
+             }
+-            boolean retValue = setupData(apnContext, radioTech);
++
++            retValue = setupData(apnContext, radioTech);
++
+             notifyOffApnsOfAvailability(apnContext.getReason());
+ 
+             if (DBG) log("trySetupData: X retValue=" + retValue);
+@@ -1410,8 +1416,38 @@ public final class DcTracker extends DcTrackerBase {
+ 
+         apnSetting = apnContext.getNextWaitingApn();
+         if (apnSetting == null) {
+-            if (DBG) log("setupData: return for no apn found!");
+-            return false;
++            if(PhoneConstants.PHONE_TYPE_CDMA==mPhone.getPhoneType()) {
++                String[] mDunApnTypes = { PhoneConstants.APN_TYPE_DUN };
++                final int mDefaultApnId = DctConstants.APN_DEFAULT_ID;
++                final String[] mDefaultApnTypes = {
++                    PhoneConstants.APN_TYPE_DEFAULT,
++                    PhoneConstants.APN_TYPE_MMS,
++                    PhoneConstants.APN_TYPE_SUPL,
++                    PhoneConstants.APN_TYPE_HIPRI,
++                    PhoneConstants.APN_TYPE_FOTA,
++                    PhoneConstants.APN_TYPE_IMS,
++                    PhoneConstants.APN_TYPE_CBS};
++
++
++                String[] types;
++                int apnId;
++                if (mRequestedApnType.equals(PhoneConstants.APN_TYPE_DUN)) {
++                    types = mDunApnTypes;
++                    apnId = DctConstants.APN_DUN_ID;
++                } else {
++                    types = mDefaultApnTypes;
++                    apnId = mDefaultApnId;
++                }
++                apnSetting = new ApnSetting(apnId, getOperatorNumeric(), null, null,
++                                null, null, null, null, null, null, null,
++                    RILConstants.SETUP_DATA_AUTH_PAP_CHAP, types,
++                    PROPERTY_CDMA_IPPROTOCOL, PROPERTY_CDMA_ROAMING_IPPROTOCOL, true, 0,
++                    0, false, 0, 0, 0, PhoneConstants.UNSET_MTU, "", "");
++                if (DBG) log("setupData: CDMA detected and apnSetting == null, use stubbed CDMA APN setting= " + apnSetting);
++            } else {
++                if (DBG) log("setupData: return for no apn found!");
++                return false;
++            }
+         }
+ 
+         int profileId = apnSetting.profileId;
+@@ -2524,20 +2560,16 @@ public final class DcTracker extends DcTrackerBase {
+      * @return operator numeric
+      */
+     private String getOperatorNumeric() {
+-        String result = null;
+-
++        String result;
+         if (isNvSubscription()) {
+             result = SystemProperties.get(CDMAPhone.PROPERTY_CDMA_HOME_OPERATOR_NUMERIC);
+-        }
+-
+-        if (TextUtils.isEmpty(result)) {
++            log("getOperatorNumberic - returning from NV: " + result);
++        } else {
+             IccRecords r = mIccRecords.get();
+             result = (r != null) ? r.getOperatorNumeric() : "";
+             log("getOperatorNumberic - returning from card: " + result);
+-        } else {
+-            log("getOperatorNumberic - returning from NV: " + result);
+         }
+-
++        if (result == null) result = "";
+         return result;
+     }
+ 
+diff --git a/frameworks/opt/telephony/src/java/com/android/internal/telephony/imsphone/ImsPhoneCallTracker.java b/frameworks/opt/telephony/src/java/com/android/internal/telephony/imsphone/ImsPhoneCallTracker.java
+index faac818..64f1e8b 100644
+--- a/frameworks/opt/telephony/src/java/com/android/internal/telephony/imsphone/ImsPhoneCallTracker.java
++++ b/frameworks/opt/telephony/src/java/com/android/internal/telephony/imsphone/ImsPhoneCallTracker.java
+@@ -1673,6 +1673,7 @@ public final class ImsPhoneCallTracker extends CallTracker {
+             // Make mIsSrvccCompleted flag to true after SRVCC complete.
+             // After SRVCC complete sometimes SRV_STATUS_UPDATE come late.
+             mIsSrvccCompleted = true;
++            mState = PhoneConstants.State.IDLE;
+         }
+     }
+ 
+diff --git a/frameworks/opt/telephony/src/java/com/android/internal/telephony/uicc/IccCardProxy.java b/frameworks/opt/telephony/src/java/com/android/internal/telephony/uicc/IccCardProxy.java
+index c4c55c6..17bae02 100755
+--- a/frameworks/opt/telephony/src/java/com/android/internal/telephony/uicc/IccCardProxy.java
++++ b/frameworks/opt/telephony/src/java/com/android/internal/telephony/uicc/IccCardProxy.java
+@@ -127,19 +127,6 @@ public class IccCardProxy extends Handler implements IccCard {
+     private boolean mIsCardStatusAvailable = false;
+     private PersoSubState mPersoSubState = PersoSubState.PERSOSUBSTATE_UNKNOWN;
+ 
+-    // Sim State events may be broadcasted before the siminfo table update has been
+-    // completed. Due to this such events may be broadcasted with dummy subId for a
+-    // particular slotId. Therefore, setExternalState once the siminfo table has been updated.
+-    // For example, if the UI receives the sim state broadcast with the state as pin locked
+-    // with dummy subId, the pin lock screen will not be displayed.
+-    private BroadcastReceiver mReceiver = new BroadcastReceiver() {
+-            @Override
+-            public void onReceive(Context context, Intent intent) {
+-                if (TelephonyIntents.ACTION_SUBINFO_RECORD_UPDATED.equals(intent.getAction())) {
+-                    setExternalState(mExternalState, true);
+-                }
+-            }};
+-
+     public IccCardProxy(Context context, CommandsInterface ci, int phoneId) {
+         if (DBG) log("ctor: ci=" + ci + " phoneId=" + phoneId);
+         mContext = context;
+@@ -151,10 +138,6 @@ public class IccCardProxy extends Handler implements IccCard {
+         mUiccController.registerForIccChanged(this, EVENT_ICC_CHANGED, null);
+         ci.registerForOn(this,EVENT_RADIO_ON, null);
+         ci.registerForOffOrNotAvailable(this, EVENT_RADIO_OFF_OR_UNAVAILABLE, null);
+-        IntentFilter filter =
+-                new IntentFilter(TelephonyIntents.ACTION_SUBINFO_RECORD_UPDATED);
+-        mContext.registerReceiver(mReceiver, filter);
+-
+         resetProperties();
+         setExternalState(State.NOT_READY, false);
+     }
+diff --git a/frameworks/opt/telephony/src/java/com/android/internal/telephony/uicc/IccRecords.java b/frameworks/opt/telephony/src/java/com/android/internal/telephony/uicc/IccRecords.java
+index 86bdca9..dd3e53c 100644
+--- a/frameworks/opt/telephony/src/java/com/android/internal/telephony/uicc/IccRecords.java
++++ b/frameworks/opt/telephony/src/java/com/android/internal/telephony/uicc/IccRecords.java
+@@ -338,16 +338,7 @@ public abstract class IccRecords extends Handler implements IccConstants {
+      * @return null if SIM is not yet ready or unavailable
+      */
+     public String getIMSI() {
+-        return null;
+-    }
+-
+-    /**
+-     * Imsi could be set by ServiceStateTrackers in case of cdma
+-     * @param imsi
+-     */
+-    public void setImsi(String imsi) {
+-        mImsi = imsi;
+-        mImsiReadyRegistrants.notifyRegistrants();
++        return mImsi;
+     }
+ 
+     /**
+diff --git a/frameworks/opt/telephony/src/java/com/android/internal/telephony/uicc/RuimRecords.java b/frameworks/opt/telephony/src/java/com/android/internal/telephony/uicc/RuimRecords.java
+index 4d16293..87c0c5e 100644
+--- a/frameworks/opt/telephony/src/java/com/android/internal/telephony/uicc/RuimRecords.java
++++ b/frameworks/opt/telephony/src/java/com/android/internal/telephony/uicc/RuimRecords.java
+@@ -181,11 +181,6 @@ public final class RuimRecords extends IccRecords {
+         mRecordsRequested = false;
+     }
+ 
+-    @Override
+-    public String getIMSI() {
+-        return mImsi;
+-    }
+-
+     public String getMdnNumber() {
+         return mMyMobileNumber;
+     }

@@ -1,0 +1,49 @@
+
+project frameworks/base/
+diff --git a/frameworks/base/services/core/java/com/android/server/NetworkManagementService.java b/frameworks/base/services/core/java/com/android/server/NetworkManagementService.java
+index 1d041ed..7679e11 100644
+--- a/frameworks/base/services/core/java/com/android/server/NetworkManagementService.java
++++ b/frameworks/base/services/core/java/com/android/server/NetworkManagementService.java
+@@ -751,7 +751,7 @@ public class NetworkManagementService extends INetworkManagementService.Stub
+                     boolean isActive = cooked[2].equals("active");
+                     notifyInterfaceClassActivity(cooked[3] == null ? 0 : Integer.parseInt(cooked[3]),
+                             isActive ? DataConnectionRealTimeInfo.DC_POWER_STATE_HIGH
+-                            : DataConnectionRealTimeInfo.DC_POWER_STATE_LOW, timestampNanos, false);
++                            : DataConnectionRealTimeInfo.DC_POWER_STATE_LOW, timestampNanos, true);
+                     return true;
+                     // break;
+             case NetdResponseCode.InterfaceAddressChange:
+@@ -1526,7 +1526,7 @@ public class NetworkManagementService extends INetworkManagementService.Stub
+                 @Override public void run() {
+                     notifyInterfaceClassActivity(type,
+                             DataConnectionRealTimeInfo.DC_POWER_STATE_HIGH,
+-                            SystemClock.elapsedRealtimeNanos(), false);
++                            SystemClock.elapsedRealtimeNanos(), true);
+                 }
+             });
+         }
+@@ -1555,7 +1555,7 @@ public class NetworkManagementService extends INetworkManagementService.Stub
+                 @Override public void run() {
+                     notifyInterfaceClassActivity(params.type,
+                             DataConnectionRealTimeInfo.DC_POWER_STATE_LOW,
+-                            SystemClock.elapsedRealtimeNanos(), false);
++                            SystemClock.elapsedRealtimeNanos(), true);
+                 }
+             });
+         }
+diff --git a/frameworks/base/telephony/java/android/telephony/TelephonyManager.java b/frameworks/base/telephony/java/android/telephony/TelephonyManager.java
+index 1f64405..f01755a 100644
+--- a/frameworks/base/telephony/java/android/telephony/TelephonyManager.java
++++ b/frameworks/base/telephony/java/android/telephony/TelephonyManager.java
+@@ -3371,7 +3371,10 @@ public class TelephonyManager {
+      */
+     public int getTetherApnRequired() {
+         try {
+-            return getITelephony().getTetherApnRequired();
++            ITelephony telephony = getITelephony();
++            if (telephony != null) {
++                return telephony.getTetherApnRequired();
++            }
+         } catch (RemoteException ex) {
+             Rlog.e(TAG, "hasMatchedTetherApnSetting RemoteException", ex);
+         } catch (NullPointerException ex) {
